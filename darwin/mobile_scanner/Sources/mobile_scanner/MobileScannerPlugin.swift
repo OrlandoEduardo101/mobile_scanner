@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Vision
 import VideoToolbox
 
@@ -12,9 +13,9 @@ import VideoToolbox
 #endif
 
 public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, FlutterTexture, AVCaptureVideoDataOutputSampleBufferDelegate {
-    
+
     let registry: FlutterTextureRegistry
-    
+
     // Sink for publishing event changes
     var sink: FlutterEventSink!
 
@@ -44,17 +45,17 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
     var symbologies:[VNBarcodeSymbology] = []
 
     var position = AVCaptureDevice.Position.back
-    
+
     var standardZoomFactor: CGFloat = 1
-    
+
 #if os(iOS)
     var deviceOrientation: UIDeviceOrientation = UIDeviceOrientation.unknown
 #endif
-    
+
     // ADDED: Observer tracking to prevent crashes
     private var isTorchObserverAdded = false
     private var isZoomObserverAdded = false
-    
+
     private var stopped: Bool {
         return device == nil || captureSession == nil
     }
@@ -80,19 +81,19 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
 
         registrar.addMethodCallDelegate(instance, channel: method)
         event.setStreamHandler(instance)
-        
+
 #if os(iOS)
         let orientationEvent = FlutterEventChannel(name:
                                             "dev.steenbakker.mobile_scanner/scanner/deviceOrientation", binaryMessenger: messenger)
         orientationEvent.setStreamHandler(DeviceOrientationStreamHandler(onOrientationChanged: instance.setDeviceOrientation))
 #endif
     }
-    
+
     init(_ registry: FlutterTextureRegistry) {
         self.registry = registry
         super.init()
     }
-    
+
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
         case "state":
@@ -121,19 +122,19 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             result(FlutterMethodNotImplemented)
         }
     }
-    
+
     // FlutterStreamHandler
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         sink = events
         return nil
     }
-    
+
     // FlutterStreamHandler
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
         sink = nil
         return nil
     }
-    
+
     // FlutterTexture
     public func copyPixelBuffer() -> Unmanaged<CVPixelBuffer>? {
         if latestBuffer == nil {
@@ -141,10 +142,10 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         }
         return Unmanaged<CVPixelBuffer>.passRetained(latestBuffer)
     }
-    
+
     var nextScanTime = 0.0
     var imagesCurrentlyBeingProcessed = false
-    
+
     // FIXED: Complete crash-safe version of captureOutput
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         // Ignore invalid texture id.
@@ -156,7 +157,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         }
         latestBuffer = imageBuffer
         registry.textureFrameAvailable(textureId)
-        
+
         let currentTime = Date().timeIntervalSince1970
         let eligibleForScan = currentTime > nextScanTime && !imagesCurrentlyBeingProcessed
         if ((detectionSpeed == DetectionSpeed.normal || detectionSpeed == DetectionSpeed.noDuplicates) && eligibleForScan || detectionSpeed == DetectionSpeed.unrestricted) {
@@ -164,22 +165,22 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             imagesCurrentlyBeingProcessed = true
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
-                
+
                 // FIXED: Capture buffer reference to avoid race conditions
                 guard let buffer = self.latestBuffer else {
                     self.imagesCurrentlyBeingProcessed = false
                     return
                 }
-                
+
                 var cgImage: CGImage?
                 let status = VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &cgImage)
-                
+
                 // FIXED: Check if image creation succeeded before using
                 guard status == kCVReturnSuccess, let validImage = cgImage else {
                     self.imagesCurrentlyBeingProcessed = false
                     return
                 }
-                
+
                 // FIXED: Use validImage (already safely unwrapped)
                 let imageRequestHandler = VNImageRequestHandler(cgImage: validImage)
                 do {
@@ -215,7 +216,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                                     imageBytes = FlutterStandardTypedData(bytes: jpegData)
                                 }
                             }
-                            
+
                             let imageData: [String: Any?] = [
                                 "bytes": imageBytes,
                                 "width": Double(validImage.width),
@@ -253,7 +254,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             }
         }
     }
-    
+
     func checkPermission(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         if #available(iOS 12.0, macOS 10.14, *) {
             let status = AVCaptureDevice.authorizationStatus(for: .video)
@@ -269,7 +270,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             result(1)
         }
     }
-    
+
     func requestPermission(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         if #available(iOS 12.0, macOS 10.14, *) {
             AVCaptureDevice.requestAccess(for: .video, completionHandler: { result($0) })
@@ -288,7 +289,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             result(nil)
             return
         }
-        
+
         // FIXED: Validate array has exactly 4 elements
         guard let windowData = scanWindowData, windowData.count == 4 else {
             result(FlutterError(
@@ -297,12 +298,12 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                 details: "Received \(scanWindowData?.count ?? 0) values"))
             return
         }
-        
+
         let left = windowData[0]
         let top = windowData[1]
         let right = windowData[2]
         let bottom = windowData[3]
-        
+
         // FIXED: Validate rectangle values
         guard right > left && bottom > top else {
             result(FlutterError(
@@ -311,14 +312,14 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                 details: nil))
             return
         }
-        
+
         scanWindow = CGRect(
             x: left,
             y: 1.0 - bottom,
             width: right - left,
             height: bottom - top
         )
-        
+
         result(nil)
     }
 
@@ -340,7 +341,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                     return .landscapeRight
                 default:
                     break
-                }         
+                }
             }
         }
 
@@ -402,26 +403,28 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
 #else
         position = AVCaptureDevice.Position.front
 #endif
-        
+
         // Open the camera device
 #if os(iOS)
         if #available(iOS 13.0, *) {
-            device = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInWideAngleCamera], mediaType: .video, position: position).devices.first
+            let discovered = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInTripleCamera, .builtInDualCamera, .builtInWideAngleCamera], mediaType: .video, position: position).devices
+            device = chooseBestDevice(from: discovered, position: position)
         }
 #else
         if #available(macOS 10.15, *) {
-            device = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: position).devices.first
+            let discovered = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: position).devices
+            device = chooseBestDevice(from: discovered, position: position)
         }
 #endif
-        
+
         if (device == nil) {
             device = AVCaptureDevice.devices(for: .video).filter({$0.position == position}).first
         }
-        
+
         if (device == nil) {
             device = AVCaptureDevice.default(for: .video)
         }
-        
+
         if (device == nil) {
             result(FlutterError(code: MobileScannerErrorCodes.NO_CAMERA_ERROR,
                                 message: MobileScannerErrorCodes.NO_CAMERA_ERROR_MESSAGE,
@@ -441,7 +444,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         }
 #endif
         captureSession!.beginConfiguration()
-        
+
         // Check the zoom factor at switching from ultra wide camera to wide camera.
         standardZoomFactor = 1
 #if os(iOS)
@@ -460,7 +463,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         // Add device input
         do {
             let input = try AVCaptureDeviceInput(device: device)
-            
+
             if (!(captureSession!.canAddInput(input))) {
                 result(FlutterError(
                     code: MobileScannerErrorCodes.CAMERA_ERROR,
@@ -468,7 +471,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                     details: nil))
                 return
             }
-            
+
             captureSession!.addInput(input)
         } catch {
             result(FlutterError(
@@ -486,7 +489,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue.main)
         captureSession!.addOutput(videoOutput)
         let deviceVideoOrientation = self.getVideoOrientation()
-        
+
 
         // Adjust orientation for the video connection
         if let connection = videoOutput.connections.first {
@@ -518,7 +521,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                 if (torch) {
                     self.turnTorchOn()
                 }
-                
+
                 // Set the initial zoom factor
                 if (initialZoom != nil) {
                     do {
@@ -527,7 +530,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                         // Do nothing.
                     }
                 }
-       
+
 #if os(iOS)
                 // The height and width are swapped because the default video orientation for ios is landscape right, but mobile_scanner operates in portrait mode.
                 // When mobile_scanner is opened in landscape mode, the Dart code automatically swaps the width and height parameters back to match the correct orientation.
@@ -545,7 +548,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                         case .front: 0
                         @unknown default: nil
                     }
-                    
+
                     answer = [
                         "textureId": self.textureId,
                         "size": size,
@@ -657,7 +660,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         }
 
     }
-    
+
     private func setFocus(_ call: FlutterMethodCall, _ result: @escaping FlutterResult) {
         guard let args = call.arguments as? [String: Any],
                   let dx = args["dx"] as? CGFloat,
@@ -668,7 +671,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                 return
             }
             let focusPoint = CGPoint(x: dx, y: dy)
-        
+
         do {
             if (device == nil) {
                 throw MobileScannerError.zoomWhenStopped
@@ -686,7 +689,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                     }
                 }
     #endif
-        
+
             result(nil)
         } catch {
             result(FlutterError(code: MobileScannerErrorCodes.GENERIC_ERROR,
@@ -716,7 +719,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             }
         }
     }
-    
+
 #endif
 
     /// Reset the zoom factor of the camera
@@ -735,45 +738,96 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             throw MobileScannerError.zoomError(error)
         }
     }
-    
+
     func getSafeZoomFactor(scale: CGFloat) -> CGFloat {
         var scaleToUse = scale
 #if os(iOS)
         var actualScale = (scale * 4) + 1
-        
+
         // Set a maximum zoom limit of 5x
         actualScale = min(5.0, actualScale)
-        
+
         // Ensure it does not exceed the camera's max zoom capability
         scaleToUse = min(device.activeFormat.videoMaxZoomFactor, actualScale)
 #endif
         return scaleToUse
     }
-    
+
     func getScaleFromZoomFactor(actualScale: CGFloat) -> CGFloat {
         return (actualScale - 1) / 4
     }
+
+// Choose the best AVCaptureDevice from a list by preferring devices and formats that
+// support BGRA or YUV pixel formats and with the highest resolution.
+fileprivate func chooseBestDevice(from devices: [AVCaptureDevice], position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+    if devices.isEmpty { return nil }
+
+    // Preferred pixel formats (BGRA and common YUV bi-planar types)
+    let preferredPixelTypes: [OSType] = [OSType(kCVPixelFormatType_32BGRA), OSType(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange), OSType(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)]
+
+    var bestDevice: AVCaptureDevice? = nil
+    var bestResolution: Int32 = 0
+
+    // First pass: prefer formats that match preferred pixel types
+    for device in devices {
+        // Ensure device matches requested position
+        if device.position != position { continue }
+
+        for format in device.formats {
+            let desc = format.formatDescription
+            let mediaSubType = CMFormatDescriptionGetMediaSubType(desc)
+
+            if preferredPixelTypes.contains(mediaSubType) {
+                let dims = CMVideoFormatDescriptionGetDimensions(desc)
+                let res = dims.width * dims.height
+                if res > bestResolution {
+                    bestResolution = res
+                    bestDevice = device
+                }
+            }
+        }
+    }
+
+    // Fallback: choose the device with the highest resolution regardless of pixel format
+    if bestDevice == nil {
+        for device in devices {
+            if device.position != position { continue }
+
+            for format in device.formats {
+                let desc = format.formatDescription
+                let dims = CMVideoFormatDescriptionGetDimensions(desc)
+                let res = dims.width * dims.height
+                if res > bestResolution {
+                    bestResolution = res
+                    bestDevice = device
+                }
+            }
+        }
+    }
+
+    return bestDevice
+}
 
     private func toggleTorch(_ result: @escaping FlutterResult) {
         guard let device = self.device else {
             result(nil)
             return
         }
-        
+
         if (!device.hasTorch) {
             result(nil)
             return
         }
-        
+
         if #available(macOS 15.0, *) {
             if(!device.isTorchAvailable) {
                 result(nil)
                 return
             }
         }
-        
+
         var newTorchMode: AVCaptureDevice.TorchMode = device.torchMode
-        
+
         switch(device.torchMode) {
         case AVCaptureDevice.TorchMode.auto:
             if #available(macOS 10.15, *) {
@@ -790,7 +844,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
             result(nil)
             return;
         }
-        
+
         if (!device.isTorchModeSupported(newTorchMode) || device.torchMode == newTorchMode) {
             result(nil)
             return;
@@ -852,13 +906,13 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         for output in captureSession.outputs {
             captureSession.removeOutput(output)
         }
-        
+
         // FIXED: Only remove observers if they were added
         if isTorchObserverAdded {
             device.removeObserver(self, forKeyPath: #keyPath(AVCaptureDevice.torchMode))
             isTorchObserverAdded = false
         }
-        
+
 #if os(iOS)
         if isZoomObserverAdded {
             device.removeObserver(self, forKeyPath: #keyPath(AVCaptureDevice.videoZoomFactor))
@@ -947,7 +1001,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
                     }
                     return
                 }
-                    
+
                 DispatchQueue.main.async {
                     result([
                         "name": "barcode",
@@ -983,7 +1037,7 @@ public class MobileScannerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler,
         case #keyPath(AVCaptureDevice.videoZoomFactor):
             if let zoomScale = change?[.newKey] as? CGFloat,
                let device = object as? AVCaptureDevice {
-                
+
                 let scale = getScaleFromZoomFactor(actualScale: zoomScale)
 
                 let event: [String: Any?] = ["name": "zoomScaleState", "data":scale]
@@ -1010,7 +1064,7 @@ class MapArgumentReader {
     func int(key: String) -> Int? {
         return (args?[key] as? NSNumber)?.intValue
     }
-    
+
     func float(key: String) -> Float? {
         return (args?[key] as? NSNumber)?.floatValue
     }
@@ -1050,7 +1104,7 @@ extension CGImage {
         let mutableData = CFDataCreateMutable(nil, 0)
 
         let formatHint: CFString
-        
+
         if #available(iOS 14.0, macOS 11.0, *) {
             formatHint = UTType.jpeg.identifier as CFString
         } else {
@@ -1079,7 +1133,7 @@ extension VNBarcodeObservation {
     private func distanceBetween(_ p1: CGPoint, _ p2: CGPoint) -> CGFloat {
         return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2))
     }
-    
+
     /// Map this `VNBarcodeObservation` to a dictionary.
     ///
     /// The `imageWidth` and `imageHeight` indicate the width and height of the input image that contains this observation.
@@ -1125,7 +1179,7 @@ extension VNBarcodeObservation {
         let width = distanceBetween(adjustedTopLeft, adjustedTopRight) * CGFloat(imageWidth)
         let height = distanceBetween(adjustedTopLeft, adjustedBottomLeft) * CGFloat(imageHeight)
         var rawBytes: FlutterStandardTypedData? = nil
-        
+
         if #available(iOS 17.0, macOS 14.0, *) {
             if let payloadData = payloadData {
                 rawBytes = FlutterStandardTypedData(bytes: payloadData)
@@ -1260,7 +1314,7 @@ extension UIDeviceOrientation {
             return "PORTRAIT_UP"
         }
     }
-    
+
     /// Converts UIDeviceOrientation to correct VideoOrientation
     var videoOrientation: AVCaptureVideoOrientation {
         switch self {
